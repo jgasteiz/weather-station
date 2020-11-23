@@ -1,3 +1,5 @@
+import dataclasses
+
 import smbus
 
 DEVICE_BUS = 1
@@ -18,12 +20,42 @@ BMP280_STATUS = 0x0C
 HUMAN_DETECT = 0x0D
 
 
-def sample_reading():
+@dataclasses.dataclass
+class ReadingResults:
+    outside_temperature: int
+    onboard_temperature: int
+    onboard_humidity: int
+    barometer_temperature: int
+    barometer_pressure: int
+    light_sensor: int
+    human_detected: bool
+
+    def __str__(self):
+        return (
+            f"outside_temperature: {self.outside_temperature}\n"
+            f"onboard_temperature: {self.onboard_temperature}\n"
+            f"onboard_humidity: {self.onboard_humidity}\n"
+            f"barometer_temperature: {self.barometer_temperature}\n"
+            f"barometer_pressure: {self.barometer_pressure}\n"
+            f"light_sensor: {self.light_sensor}\n"
+            f"human_detected: {self.human_detected}\n"
+        )
+
+
+def sample_reading() -> ReadingResults:
     bus = smbus.SMBus(DEVICE_BUS)
 
-    aReceiveBuf = []
+    reading_results_kwargs = {
+        "outside_temperature": None,
+        "onboard_temperature": None,
+        "onboard_humidity": None,
+        "barometer_temperature": None,
+        "barometer_pressure": None,
+        "light_sensor": None,
+        "human_detected": False,
+    }
 
-    aReceiveBuf.append(0x00)
+    aReceiveBuf = [0x00]
 
     for i in range(TEMP_REG, HUMAN_DETECT + 1):
         aReceiveBuf.append(bus.read_byte_data(DEVICE_ADDR, i))
@@ -33,47 +65,35 @@ def sample_reading():
     elif aReceiveBuf[STATUS_REG] & 0x02:
         print("No external temperature sensor!")
     else:
-        print(
-            "Current off-chip sensor temperature = %d Celsius" % aReceiveBuf[TEMP_REG]
-        )
+        reading_results_kwargs["outside_temperature"] = aReceiveBuf[TEMP_REG]
 
     if aReceiveBuf[STATUS_REG] & 0x04:
         print("Onboard brightness sensor overrange!")
     elif aReceiveBuf[STATUS_REG] & 0x08:
         print("Onboard brightness sensor failure!")
     else:
-        print(
-            "Current onboard sensor brightness = %d Lux"
-            % (aReceiveBuf[LIGHT_REG_H] << 8 | aReceiveBuf[LIGHT_REG_L])
-        )
+        light_sensor_value = aReceiveBuf[LIGHT_REG_H] << 8 | aReceiveBuf[LIGHT_REG_L]
+        reading_results_kwargs["light_sensor"] = light_sensor_value
 
-    print(
-        "Current onboard sensor temperature = %d Celsius"
-        % aReceiveBuf[ON_BOARD_TEMP_REG]
-    )
-    print(
-        "Current onboard sensor humidity = %d %%" % aReceiveBuf[ON_BOARD_HUMIDITY_REG]
-    )
+    reading_results_kwargs["onboard_temperature"] = aReceiveBuf[ON_BOARD_TEMP_REG]
+    reading_results_kwargs["onboard_humidity"] = aReceiveBuf[ON_BOARD_HUMIDITY_REG]
 
     if aReceiveBuf[ON_BOARD_SENSOR_ERROR] != 0:
         print("Onboard temperature and humidity sensor data may not be up to date!")
 
     if aReceiveBuf[BMP280_STATUS] == 0:
-        print(
-            "Current barometer temperature = %d Celsius" % aReceiveBuf[BMP280_TEMP_REG]
+        barometer_temperature = aReceiveBuf[BMP280_TEMP_REG]
+        barometer_pressure = (
+            aReceiveBuf[BMP280_PRESSURE_REG_L]
+            | aReceiveBuf[BMP280_PRESSURE_REG_M] << 8
+            | aReceiveBuf[BMP280_PRESSURE_REG_H] << 16
         )
-        print(
-            "Current barometer pressure = %d pascal"
-            % (
-                aReceiveBuf[BMP280_PRESSURE_REG_L]
-                | aReceiveBuf[BMP280_PRESSURE_REG_M] << 8
-                | aReceiveBuf[BMP280_PRESSURE_REG_H] << 16
-            )
-        )
+        reading_results_kwargs["barometer_temperature"] = barometer_temperature
+        reading_results_kwargs["barometer_pressure"] = barometer_pressure
     else:
         print("Onboard barometer works abnormally!")
 
-    if aReceiveBuf[HUMAN_DETECT] == 1:
-        print("Live body detected within 5 seconds!")
-    else:
-        print("No humans detected!")
+    human_detected = aReceiveBuf[HUMAN_DETECT] == 1
+    reading_results_kwargs["human_detected"] = human_detected
+
+    return ReadingResults(**reading_results_kwargs)
